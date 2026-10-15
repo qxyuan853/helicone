@@ -10,6 +10,7 @@ import {
   VertexOpenAIUsageProcessor,
 } from "@helicone-package/cost/usage/vertexUsageProcessor";
 import { getUsageProcessor } from "@helicone-package/cost/usage/getUsageProcessor";
+import { modelCostBreakdownFromRegistry } from "@helicone-package/cost/costCalc";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -568,6 +569,87 @@ describe("VertexUsageProcessor", () => {
       input: 100,
       output: 50,
     });
+  });
+
+  it("should count web searches for claude models", async () => {
+    const mockAnthropicResponse = {
+      usage: {
+        input_tokens: 11100,
+        output_tokens: 400,
+        server_tool_use: { web_search_requests: 7 },
+      },
+    };
+
+    const result = await vertexProcessor.parse({
+      responseBody: JSON.stringify(mockAnthropicResponse),
+      isStream: false,
+      model: "claude-sonnet-4-6@20260217",
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual({
+      input: 11100,
+      output: 400,
+      web_search: 7,
+    });
+  });
+
+  it("should count web searches for streamed claude models", async () => {
+    const stream = [
+      `data: ${JSON.stringify({
+        type: "message_start",
+        message: { usage: { input_tokens: 11100, output_tokens: 1 } },
+      })}`,
+      `data: ${JSON.stringify({
+        type: "message_delta",
+        usage: {
+          input_tokens: 11100,
+          output_tokens: 400,
+          server_tool_use: { web_search_requests: 7 },
+        },
+      })}`,
+    ].join("\n");
+
+    const result = await vertexProcessor.parse({
+      responseBody: stream,
+      isStream: true,
+      model: "claude-sonnet-4-6@20260217",
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual({
+      input: 11100,
+      output: 400,
+      web_search: 7,
+    });
+  });
+
+  it("should price web searches reported by claude models on vertex", async () => {
+    const result = await vertexProcessor.parse({
+      responseBody: JSON.stringify({
+        usage: {
+          input_tokens: 11100,
+          output_tokens: 400,
+          server_tool_use: { web_search_requests: 7 },
+        },
+      }),
+      isStream: false,
+      model: "claude-sonnet-4-6@20260217",
+    });
+
+    expect(result.data).not.toBeNull();
+    const breakdown = modelCostBreakdownFromRegistry({
+      modelUsage: result.data!,
+      providerModelId: "claude-sonnet-4-6@20260217",
+      provider: "vertex",
+    });
+
+    expect(breakdown).not.toBeNull();
+    expect(breakdown!.webSearchCost).toBeCloseTo(7 * 0.01, 10);
+    expect(breakdown!.totalCost).toBeCloseTo(
+      11100 * 0.000003 + 400 * 0.000015 + 7 * 0.01,
+      10
+    );
   });
 
   it("should use VertexOpenAIUsageProcessor for non-claude models", async () => {

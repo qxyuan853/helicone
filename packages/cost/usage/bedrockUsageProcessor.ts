@@ -33,6 +33,14 @@ export class BedrockUsageProcessor extends AnthropicUsageProcessor {
       };
     }
 
+    // Claude on Vertex (which reuses this processor) runs Anthropic's server-side
+    // web search and reports the searches it ran in the same field as the
+    // Anthropic API. The provider bills each one, so they must be priced here too.
+    const webSearchRequests = usage.server_tool_use?.web_search_requests ?? 0;
+    if (webSearchRequests > 0) {
+      modelUsage.web_search = webSearchRequests;
+    }
+
     return modelUsage;
   }
 }
